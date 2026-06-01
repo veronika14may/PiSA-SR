@@ -315,7 +315,7 @@ class PiSASR_eval(nn.Module):
         # Initialize components
         self.tokenizer = AutoTokenizer.from_pretrained(args.pretrained_model_path, subfolder="tokenizer")
         self.text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_path, subfolder="text_encoder").to(self.device)
-        self.sched = DDPMScheduler.from_pretrained('/kaggle/working/, subfolder="scheduler")
+        self.sched = DDPMScheduler.from_pretrained('/kaggle/working/', subfolder="scheduler")
         self.vae = AutoencoderKL.from_pretrained(args.pretrained_model_path, subfolder="vae")
         self.unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_path, subfolder="unet")
 
