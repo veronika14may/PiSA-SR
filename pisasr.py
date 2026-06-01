@@ -88,7 +88,7 @@ class CSDLoss(torch.nn.Module):
         super().__init__() 
 
         self.tokenizer = AutoTokenizer.from_pretrained(args.pretrained_model_path_csd, subfolder="tokenizer")
-        self.sched = DDPMScheduler.from_pretrained(args.pretrained_model_path_csd, subfolder="scheduler")
+        self.sched = DDPMScheduler.from_pretrained('/kaggle/working', subfolder="scheduler")
         self.args = args
 
         weight_dtype = torch.float32
