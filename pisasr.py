@@ -195,13 +195,11 @@ class PiSASR(torch.nn.Module):
                     lora_unet_modules_encoder_sem, lora_unet_modules_decoder_sem, lora_unet_others_sem
         else:
             print(f'====> resume from {args.resume_ckpt}')
-            stage1_yaml = find_filepath(args.resume_ckpt.split('/checkpoints')[0], 'hparams.yml')
-            stage1_args = read_yaml(stage1_yaml)
-            stage1_args = SimpleNamespace(**stage1_args)
             self.unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_path, subfolder="unet")
-            self.lora_rank_unet_pix = stage1_args.lora_rank_unet_pix
-            self.lora_rank_unet_sem = stage1_args.lora_rank_unet_sem
-            pisasr = torch.load(args.resume_ckpt)
+            pisasr = torch.load(args.resume_ckpt, map_location='cpu')
+            # Ранги берём из чекпоинта (они там есть), иначе из args
+            self.lora_rank_unet_pix = pisasr.get('lora_rank_unet_pix', args.lora_rank_unet_pix)
+            self.lora_rank_unet_sem = pisasr.get('lora_rank_unet_sem', args.lora_rank_unet_sem)
             self.load_ckpt_from_state_dict(pisasr)
         # unet.enable_xformers_memory_efficient_attention()
         self.unet.to("cuda")
