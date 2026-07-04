@@ -38,6 +38,8 @@ def parse_args(input_args=None):
     parser.add_argument("--highquality_dataset_txt_paths", default='/gt_selected_path.txt', type=str)
     parser.add_argument("--dataset_test_folder",
                         default="/testfolder")
+    parser.add_argument("--dataset_txt_paths_lq", type=str, required=True,
+                    help="Path to txt file with LQ image paths, aligned line-by-line with dataset_txt_paths")
     parser.add_argument("--null_text_ratio", default=0., type=float)
     parser.add_argument("--prob", default=0.5, type=float)
     parser.add_argument("--resolution_ori", type=int, default=512,)
