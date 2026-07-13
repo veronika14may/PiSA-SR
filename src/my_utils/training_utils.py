@@ -34,9 +34,9 @@ def parse_args(input_args=None):
     parser.add_argument("--lora_rank_unet_sem", default=4, type=int)
 
     # dataset options
+    parser.add_argument("--gt_test_folder", type=str, required=True)
+    parser.add_argument("--lq_test_folder", type=str, required=True)
     parser.add_argument("--dataset_txt_paths", default='/gt_path.txt', type=str)
-    parser.add_argument("--dataset_test_folder",
-                        default="/testfolder")
     parser.add_argument("--dataset_txt_paths_lq", type=str, required=True,
                     help="Path to txt file with LQ image paths, aligned line-by-line with dataset_txt_paths")
     parser.add_argument("--null_text_ratio", default=0., type=float)
