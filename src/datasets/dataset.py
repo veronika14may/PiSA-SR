@@ -29,8 +29,8 @@ class PairedSROnlineTxtDataset(torch.utils.data.Dataset):
                 f"LQ ({len(self.lq_list)}) and GT ({len(self.gt_list)}) lists must have the same length"
 
         elif split == 'test':
-            self.input_folder = os.path.join(args.dataset_test_folder, "test_SR_bicubic")
-            self.output_folder = os.path.join(args.dataset_test_folder, "test_HR")
+            self.input_folder = args.lq_test_folder
+            self.output_folder = args.gt_test_folder
             self.lr_list = []
             self.gt_list = []
             lr_names = sorted(os.listdir(self.input_folder))
