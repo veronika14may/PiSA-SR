@@ -29,9 +29,23 @@ def write_paired_png_paths(gt_folder, lq_folder, gt_txt, lq_txt):
     with open(lq_txt, 'w') as f:
         f.write('\n'.join(lq_paths) + '\n')
 
-    print(f"Wrote {len(gt_paths)} paired samples")
+    print(f"Wrote {len(gt_paths)} paired samples to {gt_txt} / {lq_txt}")
 
 
-gt_folder = '/kaggle/input/datasets/vende14/hq-lq-netherlands-train/hq_images/hq_images'
-lq_folder = '/kaggle/input/datasets/vende14/hq-lq-netherlands-train/lq_images/lq_images'
-write_paired_png_paths(gt_folder, lq_folder, '/gt_path.txt', '/lq_path.txt')
+BASE = '/kaggle/input/datasets/vende14/train-from-scratch-netherlands'
+
+# train
+write_paired_png_paths(
+    gt_folder=f'{BASE}/hq_images_split/train',
+    lq_folder=f'{BASE}/lq_images_split/train',
+    gt_txt='/kaggle/working/gt_train.txt',
+    lq_txt='/kaggle/working/lq_train.txt',
+)
+
+# test
+write_paired_png_paths(
+    gt_folder=f'{BASE}/hq_images_split/test',
+    lq_folder=f'{BASE}/lq_images_split/test',
+    gt_txt='/kaggle/working/gt_test.txt',
+    lq_txt='/kaggle/working/lq_test.txt',
+)
