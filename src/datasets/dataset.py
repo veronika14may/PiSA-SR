@@ -33,16 +33,12 @@ class PairedSROnlineTxtDataset(torch.utils.data.Dataset):
             self.output_folder = os.path.join(args.dataset_test_folder, "test_HR")
             self.lr_list = []
             self.gt_list = []
-            lr_names = os.listdir(os.path.join(self.input_folder))
-            gt_names = os.listdir(os.path.join(self.output_folder))
+            lr_names = sorted(os.listdir(self.input_folder))
+            gt_names = sorted(os.listdir(self.output_folder))
             assert len(lr_names) == len(gt_names)
             for i in range(len(lr_names)):
                 self.lr_list.append(os.path.join(self.input_folder, lr_names[i]))
                 self.gt_list.append(os.path.join(self.output_folder, gt_names[i]))
-            self.crop_preproc = transforms.Compose([
-                transforms.RandomCrop((args.resolution_ori, args.resolution_ori)),
-                transforms.Resize((args.resolution_tgt, args.resolution_tgt)),
-            ])
             assert len(self.lr_list) == len(self.gt_list)
 
     def __len__(self):
@@ -84,22 +80,25 @@ class PairedSROnlineTxtDataset(torch.utils.data.Dataset):
             return example
 
         elif self.split == 'test':
-            input_img = Image.open(self.lr_list[idx]).convert('RGB')
-            output_img = Image.open(self.gt_list[idx]).convert('RGB')
-            img_t = self.crop_preproc(input_img)
-            output_t = self.crop_preproc(output_img)
-            # input images scaled to -1, 1
-            img_t = F.to_tensor(img_t)
+            input_img = Image.open(self.lr_list[idx]).convert('RGB')   # 128x128
+            output_img = Image.open(self.gt_list[idx]).convert('RGB')  # 512x512
+        
+            # LQ → 512x512
+            input_img = F.resize(
+                input_img,
+                (self.args.resolution_tgt, self.args.resolution_tgt),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            )
+        
+            img_t = F.to_tensor(input_img)
             img_t = F.normalize(img_t, mean=[0.5], std=[0.5])
-            # output images scaled to -1, 1
-            output_t = F.to_tensor(output_t)
+            output_t = F.to_tensor(output_img)
             output_t = F.normalize(output_t, mean=[0.5], std=[0.5])
-
+        
             example = {}
             example["neg_prompt"] = self.args.neg_prompt_csd
             example["null_prompt"] = ""
             example["output_pixel_values"] = output_t
             example["conditioning_pixel_values"] = img_t
             example["base_name"] = os.path.basename(self.lr_list[idx])
-
             return example
