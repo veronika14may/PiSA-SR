@@ -108,10 +108,10 @@ def main(args):
         transforms.Resize((384, 384)),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    RAM = ram(pretrained='src/ram_pretrain_model/ram_swin_large_14m.pth',
-            pretrained_condition=None,
-            image_size=384,
-            vit='swin_l')
+    RAM = ram(pretrained=args.ram_path,
+        pretrained_condition=None,
+        image_size=384,
+        vit='swin_l')
     RAM.eval()
     RAM.to("cuda", dtype=torch.float16)
 
