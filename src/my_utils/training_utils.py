@@ -98,6 +98,9 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument("--mixed_precision", type=str, default="fp16", choices=["no", "fp16", "bf16"],)
+    parser.add_argument("--ram_path", type=str,
+                    default='src/ram_pretrain_model/ram_swin_large_14m.pth',
+                    help="Path to RAM pretrained checkpoint")
     parser.add_argument("--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers.")
     parser.add_argument("--set_grads_to_none", action="store_true",)
 
