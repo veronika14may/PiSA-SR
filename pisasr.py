@@ -88,7 +88,8 @@ class CSDLoss(torch.nn.Module):
         super().__init__() 
 
         self.tokenizer = AutoTokenizer.from_pretrained(args.pretrained_model_path_csd, subfolder="tokenizer")
-        self.sched = DDPMScheduler.from_pretrained('/kaggle/working', subfolder="scheduler")
+        # scheduler is loaded from the same SD base as the CSD teacher UNet
+        self.sched = DDPMScheduler.from_pretrained(args.pretrained_model_path_csd, subfolder="scheduler")
         self.args = args
 
         weight_dtype = torch.float32
@@ -196,12 +197,14 @@ class PiSASR(torch.nn.Module):
         else:
             print(f'====> resume from {args.resume_ckpt}')
             stage1_yaml = find_filepath(args.resume_ckpt.split('/checkpoints')[0], 'hparams.yml')
-            stage1_args = read_yaml(stage1_yaml)
-            stage1_args = SimpleNamespace(**stage1_args)
+            stage1_args = read_yaml(stage1_yaml) if stage1_yaml is not None else None
+            if stage1_args is not None:
+                stage1_args = SimpleNamespace(**stage1_args)
             self.unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_path, subfolder="unet")
-            self.lora_rank_unet_pix = stage1_args.lora_rank_unet_pix
-            self.lora_rank_unet_sem = stage1_args.lora_rank_unet_sem
-            pisasr = torch.load(args.resume_ckpt)
+            pisasr = torch.load(args.resume_ckpt, map_location="cpu")
+            # ranks come from ckpt, not from hparams.yml (more robust)
+            self.lora_rank_unet_pix = pisasr["lora_rank_unet_pix"]
+            self.lora_rank_unet_sem = pisasr["lora_rank_unet_sem"]
             self.load_ckpt_from_state_dict(pisasr)
         # unet.enable_xformers_memory_efficient_attention()
         self.unet.to("cuda")
@@ -294,6 +297,13 @@ class PiSASR(torch.nn.Module):
 
 
     def save_model(self, outf, optimizer=None, lr_scheduler=None, global_step=None):
+        """
+        Save LoRA weights and (optionally) full training state for clean resume.
+
+        If optimizer / lr_scheduler / global_step are provided, they are saved into
+        the same checkpoint. train_pisasr.py picks them up on resume so that Adam
+        moments, LR schedule (warmup) and step counter continue exactly.
+        """
         sd = {}
         sd["unet_lora_encoder_modules_pix"], sd["unet_lora_decoder_modules_pix"], sd["unet_lora_others_modules_pix"] = \
             self.lora_unet_modules_encoder_pix, self.lora_unet_modules_decoder_pix, self.lora_unet_others_pix
@@ -302,15 +312,15 @@ class PiSASR(torch.nn.Module):
         sd["lora_rank_unet_pix"] = self.lora_rank_unet_pix
         sd["lora_rank_unet_sem"] = self.lora_rank_unet_sem
         sd["state_dict_unet"] = {k: v for k, v in self.unet.state_dict().items() if "lora" in k}
-    
-        # training state for clean resume
+
+        # extra training state for clean resume (backward-compatible: old ckpts w/o these fields still load)
         if optimizer is not None:
             sd["optimizer_state_dict"] = optimizer.state_dict()
         if lr_scheduler is not None:
             sd["lr_scheduler_state_dict"] = lr_scheduler.state_dict()
         if global_step is not None:
             sd["global_step"] = global_step
-    
+
         torch.save(sd, outf)
 
 
@@ -324,7 +334,7 @@ class PiSASR_eval(nn.Module):
         # Initialize components
         self.tokenizer = AutoTokenizer.from_pretrained(args.pretrained_model_path, subfolder="tokenizer")
         self.text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_path, subfolder="text_encoder").to(self.device)
-        self.sched = DDPMScheduler.from_pretrained('/kaggle/working/', subfolder="scheduler")
+        self.sched = DDPMScheduler.from_pretrained(args.pretrained_model_path, subfolder="scheduler")
         self.vae = AutoencoderKL.from_pretrained(args.pretrained_model_path, subfolder="vae")
         self.unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_path, subfolder="unet")
 
