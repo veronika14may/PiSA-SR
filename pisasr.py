@@ -293,15 +293,24 @@ class PiSASR(torch.nn.Module):
         return output_image, x_denoised, prompt_embeds, neg_prompt_embeds
 
 
-    def save_model(self, outf):
+    def save_model(self, outf, optimizer=None, lr_scheduler=None, global_step=None):
         sd = {}
-        sd["unet_lora_encoder_modules_pix"], sd["unet_lora_decoder_modules_pix"], sd["unet_lora_others_modules_pix"] =\
+        sd["unet_lora_encoder_modules_pix"], sd["unet_lora_decoder_modules_pix"], sd["unet_lora_others_modules_pix"] = \
             self.lora_unet_modules_encoder_pix, self.lora_unet_modules_decoder_pix, self.lora_unet_others_pix
-        sd["unet_lora_encoder_modules_sem"], sd["unet_lora_decoder_modules_sem"], sd["unet_lora_others_modules_sem"] =\
+        sd["unet_lora_encoder_modules_sem"], sd["unet_lora_decoder_modules_sem"], sd["unet_lora_others_modules_sem"] = \
             self.lora_unet_modules_encoder_sem, self.lora_unet_modules_decoder_sem, self.lora_unet_others_sem
         sd["lora_rank_unet_pix"] = self.lora_rank_unet_pix
         sd["lora_rank_unet_sem"] = self.lora_rank_unet_sem
         sd["state_dict_unet"] = {k: v for k, v in self.unet.state_dict().items() if "lora" in k}
+    
+        # training state for clean resume
+        if optimizer is not None:
+            sd["optimizer_state_dict"] = optimizer.state_dict()
+        if lr_scheduler is not None:
+            sd["lr_scheduler_state_dict"] = lr_scheduler.state_dict()
+        if global_step is not None:
+            sd["global_step"] = global_step
+    
         torch.save(sd, outf)
 
 
