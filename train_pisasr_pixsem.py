@@ -3,6 +3,7 @@ import argparse
 
 import torch
 import torch.nn.functional as F
+import torch.fft as tfft
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import lpips
@@ -17,6 +18,28 @@ ALL_ADAPTERS = PIX_ADAPTERS + ["default_encoder_sem", "default_decoder_sem", "de
 class _Acc:
     mixed_precision = "fp16"
     device = torch.device("cuda")
+
+
+def fft_loss(pred, target, use_log=True):
+    """
+    FFT-loss: L1 между амплитудными спектрами предсказания и GT.
+    Штрафует потерю высоких частот (oversmoothing) в семантической стадии.
+
+    pred, target: [B, C, H, W], одинаковый динамический диапазон.
+    FFT считаем в fp32 — в fp16 нестабильно.
+    """
+    p = pred.float()
+    t = target.float()
+    P = tfft.fft2(p, norm='ortho')
+    T = tfft.fft2(t, norm='ortho')
+    P_mag = torch.abs(P)
+    T_mag = torch.abs(T)
+    if use_log:
+        # log-домен смягчает динамический диапазон (DC-компонента огромна)
+        P_mag = torch.log1p(P_mag)
+        T_mag = torch.log1p(T_mag)
+    return (P_mag - T_mag).abs().mean()
+
 
 def get_args():
     p = argparse.ArgumentParser()
@@ -51,6 +74,10 @@ def get_args():
     p.add_argument("--lambda_l2", type=float, default=1.0)
     p.add_argument("--lambda_lpips", type=float, default=2.0)
     p.add_argument("--lambda_csd", type=float, default=1.0)
+    p.add_argument("--lambda_fft", type=float, default=0.05,
+                   help="вес FFT-loss в семантической стадии; 0 = выключено")
+    p.add_argument("--fft_warmup", type=int, default=200,
+                   help="шагов линейного разогрева FFT-loss после старта sem-стадии")
     p.add_argument("--cfg_csd", type=float, default=7.5)
     p.add_argument("--min_dm_step_ratio", type=float, default=0.02)
     p.add_argument("--max_dm_step_ratio", type=float, default=0.5)
@@ -64,6 +91,7 @@ def get_args():
         args.pretrained_model_path_csd = args.pretrained_model_path
     return args
 
+
 def load_lora(net, ckpt):
     sd = torch.load(ckpt, map_location="cpu")["state_dict_unet"]
     msd = net.unet.state_dict()
@@ -72,6 +100,7 @@ def load_lora(net, ckpt):
         if k in msd and msd[k].shape == v.shape:
             msd[k].copy_(v); n += 1
     print(f"[init_ckpt] загружено LoRA-тензоров: {n}")
+
 
 def build_ram(args):
     if not args.ram_path or not os.path.exists(args.ram_path):
@@ -86,6 +115,7 @@ def build_ram(args):
     print("[RAM] загружен")
     return RAM, tf
 
+
 def get_prompts(args, RAM, ram_tf, hq, bs):
     if RAM is None:
         base = args.prompt
@@ -94,6 +124,7 @@ def get_prompts(args, RAM, ram_tf, hq, bs):
     with torch.no_grad():
         tags = inference_ram(ram_tf(hq * 0.5 + 0.5).to(torch.float16), RAM)
     return [f"{t}, {args.pos_prompt_csd}" for t in tags]
+
 
 def main():
     args = get_args()
@@ -126,7 +157,9 @@ def main():
     amp_dtype = torch.bfloat16 if args.mixed_precision == "bf16" else torch.float16
     scaler = torch.cuda.amp.GradScaler(enabled=(args.mixed_precision == "fp16"))
 
-    lam_l2, lam_lp, lam_csd = args.lambda_l2, 0.0, 0.0
+    # lam_fft остаётся 0 на pix-стадии; фактический вес рассчитывается в цикле
+    # с учётом warmup после перехода в sem-стадию
+    lam_l2, lam_lp, lam_csd, lam_fft = args.lambda_l2, 0.0, 0.0, 0.0
 
     step = 0
     while step < args.max_steps:
@@ -149,7 +182,16 @@ def main():
                            if lam_lp > 0 else torch.zeros((), device=device))
                 loss_csd = (csd.cal_csd(latents_pred, prompt_embeds, neg_prompt_embeds, args) * lam_csd
                             if lam_csd > 0 else torch.zeros((), device=device))
-                loss = loss_l2 + loss_lp + loss_csd
+
+                # FFT-loss: включается только в sem-стадии с линейным разогревом
+                if step > args.pix_steps and args.lambda_fft > 0:
+                    warmup_frac = min(1.0, (step - args.pix_steps) / max(1, args.fft_warmup))
+                    lam_fft_now = args.lambda_fft * warmup_frac
+                    loss_fft = fft_loss(pred, hq, use_log=True) * lam_fft_now
+                else:
+                    loss_fft = torch.zeros((), device=device)
+
+                loss = loss_l2 + loss_lp + loss_csd + loss_fft
 
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
@@ -161,7 +203,8 @@ def main():
             if step % args.log_steps == 0:
                 stage = "pix" if step <= args.pix_steps else "sem"
                 print(f"[{stage}] step {step}/{args.max_steps}  l2 {loss_l2.item():.4f}  "
-                      f"lpips {float(loss_lp):.4f}  csd {float(loss_csd):.4f}")
+                      f"lpips {float(loss_lp):.4f}  csd {float(loss_csd):.4f}  "
+                      f"fft {float(loss_fft):.4f}")
             if step % args.save_steps == 0:
                 outf = os.path.join(args.output_dir, "checkpoints", f"pisasr_{step}.pkl")
                 net.save_model(outf); print("saved", outf)
@@ -170,6 +213,7 @@ def main():
 
     outf = os.path.join(args.output_dir, "checkpoints", "pisasr_final.pkl")
     net.save_model(outf); print("done ->", outf)
+
 
 if __name__ == "__main__":
     main()
