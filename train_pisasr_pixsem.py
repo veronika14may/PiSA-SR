@@ -20,26 +20,24 @@ class _Acc:
     device = torch.device("cuda")
 
 
-def fft_loss(pred, target, use_log=True):
-    """
-    FFT-loss: L1 между амплитудными спектрами предсказания и GT.
-    Штрафует потерю высоких частот (oversmoothing) в семантической стадии.
-
-    pred, target: [B, C, H, W], одинаковый динамический диапазон.
-    FFT считаем в fp32 — в fp16 нестабильно.
-    """
-    p = pred.float()
-    t = target.float()
+def fft_loss(pred, target, alpha=1.0):
+    p, t = pred.float(), target.float()
     P = tfft.fft2(p, norm='ortho')
     T = tfft.fft2(t, norm='ortho')
-    P_mag = torch.abs(P)
-    T_mag = torch.abs(T)
-    if use_log:
-        # log-домен смягчает динамический диапазон (DC-компонента огромна)
-        P_mag = torch.log1p(P_mag)
-        T_mag = torch.log1p(T_mag)
-    return (P_mag - T_mag).abs().mean()
+    dist = (P - T).abs()  # комплексная разность: амплитуда + фаза
 
+    # focal-вес (Jiang et al.): усиливаем частоты с большой ошибкой
+    w = dist.detach() ** alpha
+    w = w / (w.amax(dim=(-2, -1), keepdim=True) + 1e-8)
+
+    # радиальный high-pass: DC и низкие частоты почти не штрафуем
+    H, W = p.shape[-2:]
+    fy = tfft.fftfreq(H, device=p.device).view(-1, 1)
+    fx = tfft.fftfreq(W, device=p.device).view(1, -1)
+    r = (fy ** 2 + fx ** 2).sqrt()
+    hp = (r / r.max())  # 0 в DC → 1 на углах спектра
+
+    return (w * hp * dist ** 2).mean()
 
 def get_args():
     p = argparse.ArgumentParser()
@@ -187,8 +185,10 @@ def main():
                 if step > args.pix_steps and args.lambda_fft > 0:
                     warmup_frac = min(1.0, (step - args.pix_steps) / max(1, args.fft_warmup))
                     lam_fft_now = args.lambda_fft * warmup_frac
-                    loss_fft = fft_loss(pred, hq, use_log=True) * lam_fft_now
+                    loss_fft_raw = fft_loss(pred, hq)          # сырое значение
+                    loss_fft = loss_fft_raw * lam_fft_now      # взвешенное, идёт в сумму
                 else:
+                    loss_fft_raw = torch.zeros((), device=device)
                     loss_fft = torch.zeros((), device=device)
 
                 loss = loss_l2 + loss_lp + loss_csd + loss_fft
@@ -204,7 +204,7 @@ def main():
                 stage = "pix" if step <= args.pix_steps else "sem"
                 print(f"[{stage}] step {step}/{args.max_steps}  l2 {loss_l2.item():.4f}  "
                       f"lpips {float(loss_lp):.4f}  csd {float(loss_csd):.4f}  "
-                      f"fft {float(loss_fft):.4f}")
+                      f"fft {float(loss_fft):.4f}  fft_raw {float(loss_fft_raw):.5f}")
             if step % args.save_steps == 0:
                 outf = os.path.join(args.output_dir, "checkpoints", f"pisasr_{step}.pkl")
                 net.save_model(outf); print("saved", outf)
