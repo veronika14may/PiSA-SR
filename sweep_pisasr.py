@@ -9,7 +9,7 @@ from pisasr import PiSASR_eval
 from src.my_utils.wavelet_color_fix import adain_color_fix, wavelet_color_fix
 
 # ---- config ----
-PRETRAINED_MODEL_PATH = "/kaggle/input/datasets/vende14/sd-v2-1/sd_v2_1"
+PRETRAINED_MODEL_PATH = "/kaggle/working/sd_v2_1_full"
 CKPT_DIR = "/kaggle/working/exp_full/checkpoints"
 CKPT_STEPS = [500, 1000, 1500, 2000]          # какие чекпоинты сравнить
 LSEM_VALUES = [0.0, 0.5, 0.7, 1.0, 1.2]        # сетка по lambda_sem
