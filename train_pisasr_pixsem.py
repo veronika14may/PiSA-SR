@@ -20,24 +20,11 @@ class _Acc:
     device = torch.device("cuda")
 
 
-def fft_loss(pred, target, alpha=1.0):
+def fft_loss(pred, target):
     p, t = pred.float(), target.float()
-    P = tfft.fft2(p, norm='ortho')
-    T = tfft.fft2(t, norm='ortho')
-    dist = (P - T).abs()  # комплексная разность: амплитуда + фаза
-
-    # focal-вес (Jiang et al.): усиливаем частоты с большой ошибкой
-    w = dist.detach() ** alpha
-    w = w / (w.amax(dim=(-2, -1), keepdim=True) + 1e-8)
-
-    # радиальный high-pass: DC и низкие частоты почти не штрафуем
-    H, W = p.shape[-2:]
-    fy = tfft.fftfreq(H, device=p.device).view(-1, 1)
-    fx = tfft.fftfreq(W, device=p.device).view(1, -1)
-    r = (fy ** 2 + fx ** 2).sqrt()
-    hp = (r / r.max())  # 0 в DC → 1 на углах спектра
-
-    return (w * hp * dist ** 2).mean()
+    P_mag = torch.log1p(torch.abs(tfft.fft2(p, norm='ortho')))
+    T_mag = torch.log1p(torch.abs(tfft.fft2(t, norm='ortho')))
+    return (P_mag - T_mag).abs().mean()
 
 def get_args():
     p = argparse.ArgumentParser()
