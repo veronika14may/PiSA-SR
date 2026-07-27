@@ -261,7 +261,7 @@ def main(args):
                     progress_bar.set_postfix(**logs)
 
                     # checkpoint the model + full training state for clean resume
-                    if global_step % args.checkpointing_steps == 1:
+                    if global_step % args.checkpointing_steps == 0:
                         outf = os.path.join(args.output_dir, "checkpoints", f"model_{global_step}.pkl")
                         accelerator.unwrap_model(net_pisasr).save_model(
                             outf,
@@ -271,7 +271,7 @@ def main(args):
                         )
 
                     # eval on the held-out test set
-                    if global_step % args.eval_freq == 1:
+                    if global_step % args.eval_freq == 0:
                         os.makedirs(os.path.join(args.output_dir, "eval", f"fid_{global_step}"), exist_ok=True)
                         for _step, batch_val in enumerate(dl_val):
                             x_src = batch_val["conditioning_pixel_values"].cuda()
