@@ -32,20 +32,20 @@ def write_paired_png_paths(gt_folder, lq_folder, gt_txt, lq_txt):
     print(f"Wrote {len(gt_paths)} paired samples to {gt_txt} / {lq_txt}")
 
 
-BASE = '/kaggle/input/datasets/vende14/train-from-scratch-netherlands'
+BASE = '/kaggle/input/datasets/vende14/data-from-scratch-netherlands'
 
 # train
 write_paired_png_paths(
-    gt_folder=f'{BASE}/hq_images_split/train',
-    lq_folder=f'{BASE}/lq_images_split/train',
+    gt_folder=f'{BASE}/train/hq',
+    lq_folder=f'{BASE}/train/lq',
     gt_txt='/kaggle/working/gt_train.txt',
     lq_txt='/kaggle/working/lq_train.txt',
 )
 
 # test
 write_paired_png_paths(
-    gt_folder=f'{BASE}/hq_images_split/test',
-    lq_folder=f'{BASE}/lq_images_split/test',
+    gt_folder=f'{BASE}/test/hq',
+    lq_folder=f'{BASE}/test/lq',
     gt_txt='/kaggle/working/gt_test.txt',
     lq_txt='/kaggle/working/lq_test.txt',
 )
