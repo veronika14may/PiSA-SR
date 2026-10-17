@@ -107,15 +107,23 @@ class FixedValSet(Dataset):
         n = lambda x: TF.normalize(TF.to_tensor(x), [0.5] * 3, [0.5] * 3)
         return n(lq), n(hq)
 
+def vol_of(pil_img):
+    g = np.array(pil_img.convert("L"))
+    try:
+        import cv2
+        return float(cv2.Laplacian(g, cv2.CV_64F).var())
+    except ImportError:
+        g = g.astype(np.float64)
+        lap = g[:-2, 1:-1] + g[2:, 1:-1] + g[1:-1, :-2] + g[1:-1, 2:] - 4 * g[1:-1, 1:-1]
+        return float(lap.var())
 
 @torch.no_grad()
 def evaluate(net, val_dl, metric, args, amp_dtype, use_amp):
-    """LPIPS на фикс. val. Пустой промпт (как в test_pisasr.py), фикс. шум VAE-энкодера."""
     was_training = net.unet.training
     net.unet.eval()
     old_ratio = args.null_text_ratio
     args.null_text_ratio = 1.1          # random.random() < 1.1 всегда -> всегда null-промпт
-    vals = []
+    vals, vols, vols_gt = [], [], []
     with torch.random.fork_rng(devices=[0]):
         torch.manual_seed(1234)
         for lq, hq in val_dl:
@@ -132,13 +140,16 @@ def evaluate(net, val_dl, metric, args, amp_dtype, use_amp):
                     out = adain_color_fix(target=out, source=src)
                 elif args.align_method == "wavelet":
                     out = wavelet_color_fix(target=out, source=src)
+                vols.append(vol_of(out))
+                vols_gt.append(vol_of(transforms.ToPILImage()((hq[k].float().cpu() * 0.5 + 0.5).clamp(0, 1))))
                 tp = TF.to_tensor(out).unsqueeze(0).cuda()
                 tg = ((hq[k:k + 1].float() * 0.5 + 0.5).clamp(0, 1))
                 v = metric(tp, tg)          # pyiqa lpips, [0,1] — как в eval_sweep.py
                 vals.extend(v.flatten().tolist())
     args.null_text_ratio = old_ratio
     net.unet.train(was_training)
-    return float(np.mean(vals)), float(np.std(vals) / np.sqrt(len(vals)))
+    return (float(np.mean(vals)), float(np.std(vals) / np.sqrt(len(vals))),
+            float(np.mean(vols)), float(np.mean(vols_gt)))
 
 
 def main():
@@ -175,12 +186,13 @@ def main():
 
     log_path = os.path.join(args.output_dir, f"curve_{args.stage}.csv")
     f = open(log_path, "w", newline=""); w = csv.writer(f)
-    w.writerow(["global_step", "stage", "lpips_val", "lpips_val_sem", "train_l2", "train_lpips"])
+    w.writerow(["global_step", "stage", "lpips_val", "lpips_val_sem", "vol", "vol_gt", "vol_ratio", "train_l2", "train_lpips"])
 
     def log_eval(gstep, stage, l2=float("nan"), lp=float("nan")):
-        m, se = evaluate(net, val_dl, metric, args, amp_dtype, use_amp)
-        w.writerow([gstep, stage, f"{m:.5f}", f"{se:.5f}", f"{l2:.5f}", f"{lp:.5f}"]); f.flush()
-        print(f"[eval] step {gstep:5d} ({stage})  LPIPS val = {m:.4f} ± {se:.4f}")
+        m, se, vol, vol_gt = evaluate(net, val_dl, metric, args, amp_dtype, use_amp)
+        w.writerow([gstep, stage, f"{m:.5f}", f"{se:.5f}", f"{vol:.2f}", f"{vol_gt:.2f}",
+                    f"{vol / vol_gt:.4f}", f"{l2:.5f}", f"{lp:.5f}"]); f.flush()
+        print(f"[eval] step {gstep:5d} ({stage})  LPIPS val = {m:.4f} ± {se:.4f}  VoL/GT = {vol / vol_gt:.3f}")
         if args.save_ckpt and gstep > 0:
             net.save_model(os.path.join(ck_dir, f"pisasr_{gstep}.pkl"))
 
@@ -239,15 +251,20 @@ def main():
     import glob
     d = pd.concat([pd.read_csv(p) for p in sorted(glob.glob(os.path.join(args.output_dir, "curve_*.csv")))])
     d = d.drop_duplicates(["global_step", "stage"], keep="last").sort_values("global_step")
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
     for name, col, sel in [("pix-этап", "tab:blue", d.stage.isin(["init", "pix"])),
                            ("sem-этап", "tab:orange", d.stage.isin(["sem_start", "sem"]))]:
         s = d[sel]
         ax.plot(s.global_step, s.lpips_val, "-o", ms=2.5, color=col, label=name)
         ax.fill_between(s.global_step, s.lpips_val - s.lpips_val_sem, s.lpips_val + s.lpips_val_sem,
                         color=col, alpha=0.15)
-    ax.axvline(args.pix_steps, ls="--", c="gray")
-    ax.set_xlabel("шаг дообучения"); ax.set_ylabel("LPIPS (val), ↓"); ax.grid(alpha=0.3); ax.legend()
+        if "vol_ratio" in s and s.vol_ratio.notna().any():
+            ax2.plot(s.global_step, s.vol_ratio, "-o", ms=2.5, color=col)
+    for a_ in (ax, ax2):
+        a_.axvline(args.pix_steps, ls="--", c="gray"); a_.grid(alpha=0.3)
+    ax2.axhline(1.0, ls=":", c="k")
+    ax.set_ylabel("LPIPS (val), ↓"); ax.legend()
+    ax2.set_ylabel("VoL / VoL(GT), цель ≈ 1"); ax2.set_xlabel("шаг дообучения")
     fig.tight_layout(); fig.savefig(os.path.join(args.output_dir, "curve.png"), dpi=200)
     print("saved", log_path, "и curve.png")
 
