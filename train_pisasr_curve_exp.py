@@ -1,4 +1,6 @@
 import os, csv, random, argparse
+os.environ["MPLBACKEND"] = "Agg"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import numpy as np
 import torch
