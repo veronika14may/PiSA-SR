@@ -17,7 +17,7 @@ pip install focal-frequency-loss fdl-pytorch lpips pyiqa
 | `train_freq.py` | Обучение: копия `train_pisasr_curve_exp.py`, потери задаются отдельно для pix- и sem-этапа |
 | `train_vae_decoder.py` | К6: дообучение декодера VAE при замороженном энкодере |
 | `vae_utils.py` | Загрузка VAE, сохранение и подстановка дообученного декодера |
-| `make_lq.py` | Создание LQ из HQ слепой деградацией Real-ESRGAN без сдвига относительно HQ |
+| `make_lq.py` | Создание LQ из HQ без сдвига относительно HQ. Пресеты: `diffbir` (Real-ESRGAN, по умолчанию) и `mild` (мягкая деградация: PSF-размытие, точное понижение в 4 раза, небольшой шум и JPEG), выбор через `--preset` |
 | `experiments.sh` | Готовые команды для экспериментов E00–E18 |
 | `losses.py` | Fourier Space Loss, подключение Focal Frequency Loss и FDL, FDL по областям / границам / полосам, карта деталей |
 | `metrics.py` | Метрики по частотным кольцам, эффективное разрешение, VoL |

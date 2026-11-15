@@ -74,8 +74,8 @@ json.dump({
 }, open(sched + "/scheduler_config.json", "w"), indent=2)"""
 
 MAKELQ = """# LQ из HQ без сдвига (повторный запуск пропускает готовые файлы)
-!python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {TRAIN_HQ} --out_dir {TRAIN_LQ}
-!python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {VAL_HQ} --out_dir {VAL_LQ} --seed 1"""
+!python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {TRAIN_HQ} --out_dir {TRAIN_LQ} --preset {LQ_PRESET}
+!python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {VAL_HQ} --out_dir {VAL_LQ} --seed 1 --preset {LQ_PRESET}"""
 
 PATHS = '''
 # ==== Пути: отредактируйте под свои датасеты ====
@@ -85,8 +85,10 @@ INIT_CKPT = "/kaggle/input/datasets/vende14/pisa-sr/pisa_sr.pkl"   # релиз�
 RAM_PATH  = ""      # файл ram_swin_large_14m.pth; пусто = без RAM (фиксированный промпт)
 TRAIN_HQ  = "/kaggle/input/datasets/vende14/data-from-scratch-netherlands/train/hq"
 VAL_HQ    = "/kaggle/input/datasets/vende14/hq-lq-netherlands-val/hq_images"
-TRAIN_LQ  = "/kaggle/working/lq_train"      # создаются ячейкой make_lq из HQ
-VAL_LQ    = "/kaggle/working/lq_val"
+LQ_PRESET = "diffbir"   # деградация LQ: "diffbir" — Real-ESRGAN/DiffBIR (как раньше); "mild" — мягкая (вариант B)
+_sfx = "" if LQ_PRESET == "diffbir" else "_" + LQ_PRESET      # у каждого пресета своя папка, файлы не смешиваются
+TRAIN_LQ  = f"/kaggle/working/lq_train{_sfx}"   # создаются ячейкой make_lq из HQ
+VAL_LQ    = f"/kaggle/working/lq_val{_sfx}"
 
 # ==== Параметры обучения ====
 OUT_ROOT = "/kaggle/working/experiments/freq"   # сюда пишутся логи и чекпоинты
@@ -241,10 +243,10 @@ N_DIAG = 100
     md("## 3. Перебор `lambda_sem`\n\nЕсли с ростом `lambda_sem` отношение `vol_ratio` идёт к 1, а `hf_err` "
        "растёт выше 1, резкость добавляется выдуманными деталями."),
     code("!python freq_exp/infer_eval.py --pretrained_model_path {SD_PATH} --ckpt {CKPT_TO_CHECK} \\\n"
-         "    --lq_dir {VAL_LQ} --hq_dir {VAL_HQ} --out_dir /kaggle/working/sr/diag --n {N_DIAG} \\\n"
+         "    --lq_dir {VAL_LQ} --hq_dir {VAL_HQ} --out_dir /kaggle/working/sr/diag{_sfx} --n {N_DIAG} \\\n"
          "    --lambda_sem 0 0.5 1.0 1.2 1.5 2.0"),
     md("## 4. Амплитуда или фаза\n\nТест подмены из TFDSR для режима `lambda_sem = 1`."),
-    code("!python freq_exp/diag_swap_test.py --sr_dir /kaggle/working/sr/diag/lsem_1.0 --hq_dir {VAL_HQ}"),
+    code("!python freq_exp/diag_swap_test.py --sr_dir /kaggle/working/sr/diag{_sfx}/lsem_1.0 --hq_dir {VAL_HQ}"),
     md("## Что делать с результатами\n\n"
        "- Сдвиг пар больше 0,25 пикселя — сначала пересоздать LQ, иначе эксперименты с FFL и Fourier Space Loss бессмысленны.\n"
        "- Потолок VAE низкий — в дипломе это нужно показать отдельной строкой таблицы; ожидания от потерь снизить.\n"

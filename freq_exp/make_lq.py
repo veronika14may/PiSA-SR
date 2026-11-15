@@ -14,6 +14,13 @@
   * JPEG настоящий (Pillow), а не дифференцируемое приближение.
 Не делается повышение резкости HQ (use_sharpener из DiffBIR): эталон остаётся исходным снимком.
 
+Пресеты (--preset):
+  diffbir (по умолчанию) — конфиг DiffBIR/Real-ESRGAN, рассчитан на фото из интернета: две ступени, шум σ до 10,
+                           JPEG 30–95, случайный масштаб 0,15–1,5, sinc-фильтры.
+  mild                   — мягкий вариант под снимок другого сенсора с меньшим разрешением: PSF-размытие,
+                           точное понижение в 4 раза (интегрирование по площади), небольшой шум сенсора на уровне LQ,
+                           редкий мягкий JPEG. Без случайного масштаба и sinc-ореолов.
+
 Деградация каждого файла определяется его именем и --seed, поэтому повторный запуск даёт те же LQ.
 Скрипт не зависит от basicsr; нужны torch, numpy, scipy, Pillow.
 """
@@ -47,6 +54,19 @@ OPT = dict(
     jpeg_range2=[30, 95],
     final_sinc_prob=0.8,
 )
+
+# Мягкий пресет (вариант B). Размытие задано в пикселях HQ, шум и JPEG применяются уже на масштабе LQ.
+OPT_MILD = dict(
+    kernel_sizes=[9, 11, 13, 15, 17],
+    kernel_list=["iso", "aniso", "generalized_iso", "plateau_iso"],
+    kernel_prob=[0.55, 0.30, 0.10, 0.05],
+    betag_range=[0.5, 4], betap_range=[1, 2],
+    blur_sigma=[0.8, 2.5],                       # ≈ 0.2–0.6 пикселя LQ при масштабе 4: PSF оптики и сенсора
+    resize_modes=["area", "bicubic", "bilinear"], resize_prob=[0.6, 0.3, 0.1],   # bicubic/bilinear — с антиалиасингом
+    gaussian_noise_prob=0.5, noise_range=[0.5, 3], poisson_scale_range=[0.05, 0.3], gray_noise_prob=0.1,
+    jpeg_prob=0.7, jpeg_range=[70, 95],
+)
+PRESETS = {"diffbir": OPT, "mild": OPT_MILD}
 
 
 # ----------------------------- ядра размытия -----------------------------
@@ -141,12 +161,14 @@ def jpeg(rng, x, q_range):
     return torch.from_numpy(out).permute(2, 0, 1).float().div(255.0).unsqueeze(0).to(x.device)
 
 
-def resize(x, size, mode):
+def resize(x, size, mode, antialias=False):
     """Только явный размер: координаты считаются по отношению размеров, центры совпадают."""
     size = (max(int(size[0]), 8), max(int(size[1]), 8))
     if tuple(x.shape[-2:]) == size:
         return x
     kw = {} if mode == "area" else {"align_corners": False}
+    if antialias and mode != "area":
+        kw["antialias"] = True
     return F.interpolate(x, size=size, mode=mode, **kw).clamp(0, 1)
 
 
@@ -199,10 +221,25 @@ def degrade(hq, rng, scale=4, o=OPT):
     return out.clamp(0, 1)
 
 
+@torch.no_grad()
+def degrade_mild(hq, rng, scale=4, o=OPT_MILD):
+    """Мягкий пресет: размытие PSF -> точное понижение в scale раз -> шум сенсора -> (иногда) мягкий JPEG."""
+    H, W = hq.shape[-2:]
+    out = filter2d(hq, random_kernel(rng, 0.0, o["blur_sigma"], o))
+    mode = str(rng.choice(o["resize_modes"], p=o["resize_prob"]))
+    out = resize(out, (H // scale, W // scale), mode, antialias=True)
+    out = add_noise(rng, out, o["gaussian_noise_prob"], o["noise_range"], o["poisson_scale_range"], o["gray_noise_prob"])
+    if rng.uniform() < o["jpeg_prob"]:
+        out = jpeg(rng, out, o["jpeg_range"])
+    return out.clamp(0, 1)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--hq_dir", required=True)
     p.add_argument("--out_dir", required=True)
+    p.add_argument("--preset", choices=sorted(PRESETS), default="diffbir",
+                   help="diffbir — конфиг Real-ESRGAN/DiffBIR; mild — мягкая деградация (см. описание в начале файла)")
     p.add_argument("--scale", type=int, default=4)
     p.add_argument("--seed", type=int, default=0, help="для валидации возьмите другой сид, чем для обучения")
     p.add_argument("--n", type=int, default=0, help="обработать только первые n файлов (0 = все)")
@@ -216,6 +253,13 @@ def main():
     if a.n > 0:
         names = names[:a.n]
     os.makedirs(a.out_dir, exist_ok=True)
+    meta = os.path.join(a.out_dir, "_degradation.json")
+    if os.path.exists(meta) and not a.overwrite:
+        with open(meta) as f:
+            prev = json.load(f).get("preset", "diffbir")      # файлы без поля preset созданы конфигом DiffBIR
+        if prev != a.preset:
+            raise SystemExit(f"В {a.out_dir} уже лежат LQ с пресетом '{prev}', а запрошен '{a.preset}'. "
+                             f"Укажите другую папку (--out_dir) или добавьте --overwrite.")
 
     done = skipped = 0
     for i, nm in enumerate(names):
@@ -229,7 +273,7 @@ def main():
             f"{nm}: размер {w}x{h} не делится на {a.scale}; обрежьте HQ, иначе пары не совместятся"
         hq = torch.from_numpy(np.array(im)).permute(2, 0, 1).float().div(255.0).unsqueeze(0).to(a.device)
         rng = np.random.default_rng([a.seed, zlib.crc32(nm.encode())])   # зависит только от имени файла и сида
-        lq = degrade(hq, rng, a.scale)
+        lq = (degrade_mild if a.preset == "mild" else degrade)(hq, rng, a.scale)
         arr = (lq[0].permute(1, 2, 0).cpu().numpy() * 255.0).round().astype(np.uint8)
         Image.fromarray(arr).save(dst)
         done += 1
@@ -237,7 +281,7 @@ def main():
             print(f"{i + 1}/{len(names)}", flush=True)
     print(f"создано: {done}, пропущено (уже были): {skipped}, папка: {a.out_dir}")
     with open(os.path.join(a.out_dir, "_degradation.json"), "w") as f:
-        json.dump({"seed": a.seed, "scale": a.scale, "opt": OPT}, f, ensure_ascii=False, indent=1)
+        json.dump({"preset": a.preset, "seed": a.seed, "scale": a.scale, "opt": PRESETS[a.preset]}, f, ensure_ascii=False, indent=1)
 
     if a.check > 0:
         from diag_alignment import estimate_shift
