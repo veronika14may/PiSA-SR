@@ -35,21 +35,33 @@ from diffusers.models.embeddings import (
     ImageHintTimeEmbedding,
     ImageProjection,
     ImageTimeEmbedding,
-    PositionNet,
     TextImageProjection,
     TextImageTimeEmbedding,
     TextTimeEmbedding,
     TimestepEmbedding,
     Timesteps,
 )
+try:
+    from diffusers.models.embeddings import PositionNet
+except ImportError:  # в новых diffusers класс переименован
+    from diffusers.models.embeddings import GLIGENTextBoundingboxProjection as PositionNet
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.unet_2d_blocks import (
-    UNetMidBlock2D,
-    UNetMidBlock2DCrossAttn,
-    UNetMidBlock2DSimpleCrossAttn,
-    get_down_block,
-    get_up_block,
-)
+try:
+    from diffusers.models.unet_2d_blocks import (
+        UNetMidBlock2D,
+        UNetMidBlock2DCrossAttn,
+        UNetMidBlock2DSimpleCrossAttn,
+        get_down_block,
+        get_up_block,
+    )
+except ImportError:  # в новых diffusers модуль перенесён в models.unets
+    from diffusers.models.unets.unet_2d_blocks import (
+        UNetMidBlock2D,
+        UNetMidBlock2DCrossAttn,
+        UNetMidBlock2DSimpleCrossAttn,
+        get_down_block,
+        get_up_block,
+    )
 
 from tqdm import tqdm
 from peft.tuners.tuners_utils import onload_layer
