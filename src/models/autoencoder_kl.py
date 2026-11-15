@@ -17,7 +17,10 @@ import torch
 import torch.nn as nn
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.loaders import FromOriginalVAEMixin
+try:
+    from diffusers.loaders import FromOriginalVAEMixin
+except ImportError:  # в новых diffusers класс переименован
+    from diffusers.loaders import FromOriginalModelMixin as FromOriginalVAEMixin
 from diffusers.utils.accelerate_utils import apply_forward_hook
 from diffusers.models.attention_processor import (
     ADDED_KV_ATTENTION_PROCESSORS,
