@@ -210,7 +210,9 @@ class RealESRGAN_degradation(object):
         else:
             scale = 1
         mode = random.choice(['area', 'bilinear', 'bicubic'])
-        out = F.interpolate(out, scale_factor=scale, mode=mode)
+        # размер задаётся явно: при scale_factor результат округляется вниз, а координаты считаются
+        # по неокруглённому масштабу, из-за чего LQ случайно сдвигается относительно HQ
+        out = F.interpolate(out, size=(round(ori_h * scale), round(ori_w * scale)), mode=mode)
         # noise
         gray_noise_prob = self.opt['gray_noise_prob']
         if np.random.uniform() < self.opt['gaussian_noise_prob']:
