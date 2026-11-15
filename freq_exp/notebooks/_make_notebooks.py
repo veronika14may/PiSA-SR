@@ -215,16 +215,22 @@ N_DIAG = 100
 
 # ---------------------------------------------------------------- 01..07 обучение
 NOTEBOOKS["01_baseline.ipynb"] = training_nb(
-    "01_baseline", "01. Базовая линия: исходные потери PiSA-SR, два сида",
-    "Sem-этап с исходным набором потерь (L2 + 2·LPIPS + CSD), стартует с релизного чекпоинта. Два запуска "
-    "с разными сидами показывают разброс метрик: различия между методами меньше этого разброса обсуждать нельзя.",
+    "01_baseline", "01. Базовая линия: исходные потери PiSA-SR, два сида и два этапа",
+    "Исходный набор потерь PiSA-SR (L2 + 2·LPIPS + CSD), старт с релизного чекпоинта. E01 и E02 — только sem-этап "
+    "с разными сидами: показывают разброс метрик, различия между методами меньше этого разброса обсуждать нельзя. "
+    "E00 — оба этапа (pix, затем sem): это контроль для экспериментов E05–E15, которые тоже обучают оба этапа. "
+    "E00 идёт примерно вдвое дольше E01; если сессии не хватает, запускайте этапы по отдельности (см. конец ноутбука).",
     [("E01", "Базовая линия, сид 123", "--stage sem --seed 123"),
-     ("E02", "Базовая линия, сид 456", "--stage sem --seed 456")],
-    extra_md="## Разброс между сидами\n\nСравните две папки результатов: интервалы в выводе показывают, "
-             "какие различия считать шумом.")
-NOTEBOOKS["01_baseline.ipynb"]["cells"].insert(-2, {
-    "cell_type": "code", "metadata": {}, "outputs": [], "execution_count": None,
-    "source": ["!python freq_exp/eval_bands.py --sr_dir {sr_E01} --sr_dir_b {sr_E02} --hq_dir {VAL_HQ}"]})
+     ("E02", "Базовая линия, сид 456", "--stage sem --seed 456"),
+     ("E00", "Контроль для E05–E15: оба этапа", "--stage both --seed 123")],
+    extra_md="## Разброс между сидами и вклад pix-этапа\n\n"
+             "Первая таблица (E01 против E02) — шум от сида: различия меньше него считать случайными. "
+             "Вторая (E00 против E01) — разница между схемами «pix + sem» и «только sem» при тех же потерях. "
+             "Эксперименты E05–E15 сравнивайте с E00, а E03–E04 — с E01.")
+for _cmd in ("!python freq_exp/eval_bands.py --sr_dir {sr_E01} --sr_dir_b {sr_E02} --hq_dir {VAL_HQ}",
+             "!python freq_exp/eval_bands.py --sr_dir {sr_E00} --sr_dir_b {sr_E01} --hq_dir {VAL_HQ}"):
+    NOTEBOOKS["01_baseline.ipynb"]["cells"].insert(-2, {
+        "cell_type": "code", "metadata": {}, "outputs": [], "execution_count": None, "source": [_cmd]})
 
 NOTEBOOKS["02_K1_fdl_as_in_paper.ipynb"] = training_nb(
     "02_K1_fdl", "02. К1: FDL без изменений (точка сравнения «аналог как есть»)",
@@ -387,7 +393,8 @@ VAL_HQ   = "/kaggle/input/datasets/vende14/hq-lq-netherlands-val/hq_images"
 RESULT_ROOTS = sorted(glob.glob("/kaggle/input/*/experiments/freq"))
 # Папки с изображениями (sr/<эксперимент>/lsem_1.0):
 SR_ROOTS = sorted(glob.glob("/kaggle/input/*/sr"))
-BASELINE = "E01"       # с чем сравнивать
+BASELINE_SEM  = "E01"   # для экспериментов только с sem-этапом (E01–E04)
+BASELINE_BOTH = "E00"   # для экспериментов с обоими этапами (E05–E15)
 print(RESULT_ROOTS, SR_ROOTS, sep="\\n")
 '''),
     code('''
@@ -418,11 +425,18 @@ sr = {}
 for root in SR_ROOTS:
     for d in sorted(glob.glob(os.path.join(root, "E*", "lsem_1.0"))):
         sr[os.path.basename(os.path.dirname(d))] = d
-base = next((v for k, v in sr.items() if k.startswith(BASELINE)), None)
-assert base, f"нет изображений базовой линии {BASELINE}"
+def find(prefix):
+    return next(((k, v) for k, v in sr.items() if k.startswith(prefix)), (None, None))
+SEM_ONLY = ("E01", "E02", "E03", "E04")
 for name, d in sr.items():
+    want = BASELINE_SEM if name.startswith(SEM_ONLY) else BASELINE_BOTH
+    bname, base = find(want)
+    if base is None and want != BASELINE_SEM:
+        want = BASELINE_SEM; bname, base = find(want)    # E00 не запускали — запасной вариант
+        print(f"[!] нет {BASELINE_BOTH}: {name} сравнивается с {want}, это разные схемы обучения")
+    assert base, f"нет изображений базовой линии {want}"
     if d != base:
-        print("\\n" + "=" * 20, name, "против", BASELINE)
+        print("\\n" + "=" * 20, name, "против", want)
         !python freq_exp/eval_bands.py --sr_dir {d} --sr_dir_b {base} --hq_dir {VAL_HQ} --n_boot 1000 | tail -12
 '''),
     md("## Кривые ошибки в высокочастотных полосах"),

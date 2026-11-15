@@ -87,7 +87,7 @@ VAE_DEC=<тот же файл> bash freq_exp/experiments.sh E09                 
 | Ноутбук | Что делает |
 | --- | --- |
 | `00_diagnostics.ipynb` | Без обучения: совмещение пар, потолок VAE, перебор `lambda_sem`, тест подмены |
-| `01_baseline.ipynb` | E01, E02 |
+| `01_baseline.ipynb` | E00 (оба этапа), E01, E02 (только sem, два сида) |
 | `02_K1_fdl_as_in_paper.ipynb` | E03, E04 |
 | `03_V1_ffl_pix_fdl_sem.ipynb` | E05, E06, E07 |
 | `04_K2_detail_map.ipynb` | E08, E09 |
