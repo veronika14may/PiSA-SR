@@ -3,6 +3,7 @@
 #     bash freq_exp/experiments.sh E05          # один эксперимент
 #     bash freq_exp/experiments.sh E01 E02 E03  # несколько подряд
 #     bash freq_exp/experiments.sh list         # показать список
+#     STAGE=pix bash freq_exp/experiments.sh E05   # только pix-этап; затем STAGE=sem ... E05 — только sem-этап
 # Запускать из папки PiSA-SR-main. Пути задаются переменными окружения (или правкой значений ниже).
 set -euo pipefail
 
@@ -41,7 +42,9 @@ run() { local name=$1; shift
         [ -n "$VAE_DEC" ] && name="${name}_vaedec"     # запуски с новым декодером пишутся в отдельную папку
         : "${TRAIN_LQ:?укажите TRAIN_LQ}" "${TRAIN_HQ:?укажите TRAIN_HQ}" "${VAL_LQ:?укажите VAL_LQ}" "${VAL_HQ:?укажите VAL_HQ}"
         echo "=== $name: $*"
-        python freq_exp/train_freq.py "${COMMON[@]}" --output_dir "$OUT/$name" "$@"; }
+        # STAGE=pix или STAGE=sem запускает только один этап (последний --stage перекрывает прежний);
+        # sem-этап берёт $OUT/$name/checkpoints/pisasr_pix_final.pkl, который оставил этап pix
+        python freq_exp/train_freq.py "${COMMON[@]}" --output_dir "$OUT/$name" "$@" ${STAGE:+--stage "$STAGE"}; }
 
 # К6: дообучение декодера VAE (без UNet и без LQ)
 vae() { local name=$1; shift

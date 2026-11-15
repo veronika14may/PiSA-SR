@@ -149,22 +149,32 @@ print(zpath, round(os.path.getsize(zpath) / 2**20, 1), "МБ")
 RESUME = """
 ## Если сессия оборвалась
 
-- **Оба этапа не помещаются в одну сессию.** Запустите этапы по отдельности тем же набором флагов:
-  сначала `--stage pix`, затем `--stage sem` (он возьмёт `checkpoints/pisasr_pix_final.pkl` из той же папки
-  результата). Команду со всеми флагами печатает `experiments.sh` в строке `=== ...` перед запуском;
-  замените в ней `--stage both` на нужный этап.
+- **Оба этапа не помещаются в одну сессию.** В экспериментах с двумя этапами обучение уже разбито на две ячейки:
+  `STAGE=pix` и `STAGE=sem`. Если сессия оборвалась после pix-этапа, не запускайте pix заново: сохраните версию
+  ноутбука (`Save Version`), подключите её выход и положите `checkpoints/pisasr_pix_final.pkl` в папку
+  `<OUT_ROOT>/<эксперимент>/checkpoints/`, затем запустите только ячейку `STAGE=sem`.
 - **Не хватает памяти (CUDA out of memory).** Проверьте, что выбраны две видеокарты; оставьте `FDL_CROP = 256`;
   в крайнем случае добавьте к команде `--fdl_num_proj 64`.
 - **Потеря стала NaN.** Чаще всего это Fourier Space Loss со слишком большим весом: оставьте `AUTO = 0.3`.
 """
 
 
+TWO_STAGE = {"E00"} | {f"E{n:02d}" for n in range(5, 16)}   # эксперименты с --stage both (см. experiments.sh)
+
+
 def training_nb(tag, title, what, exps, extra_md=""):
     cells = [md(f"# {title}\n\n{what}\n{INSTRUCTION}"),
              code(f'NOTEBOOK_TAG = "{tag}"\n' + PATHS), code(SETUP), code(SHOW), code(EVAL)]
     for e, desc, flags in exps:
-        cells.append(md(f"## {e}. {desc}\n\nОтличие от исходного обучения PiSA-SR: `{flags}`"))
-        cells.append(code(f"!bash freq_exp/experiments.sh {e}"))
+        two = e in TWO_STAGE
+        note = ("\n\nОбучение разбито на две ячейки: сначала pix-этап, затем sem-этап. Pix-этап сохраняет "
+                "`checkpoints/pisasr_pix_final.pkl`, с него стартует sem-этап.") if two else ""
+        cells.append(md(f"## {e}. {desc}\n\nОтличие от исходного обучения PiSA-SR: `{flags}`{note}"))
+        if two:
+            cells.append(code(f"# pix-этап\n!STAGE=pix bash freq_exp/experiments.sh {e}"))
+            cells.append(code(f"# sem-этап (стартует с pisasr_pix_final.pkl)\n!STAGE=sem bash freq_exp/experiments.sh {e}"))
+        else:
+            cells.append(code(f"!bash freq_exp/experiments.sh {e}"))
         cells.append(code(f'show("{e}")'))
         cells.append(code(f'sr_{e} = infer("{e}")'))
     if extra_md:
