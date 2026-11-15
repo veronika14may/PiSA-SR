@@ -125,9 +125,14 @@ class AutoencoderKL(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         self.tile_latent_min_size = int(sample_size / (2 ** (len(self.config.block_out_channels) - 1)))
         self.tile_overlap_factor = 0.25
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, (Encoder, Decoder)):
-            module.gradient_checkpointing = value
+    def _set_gradient_checkpointing(self, *args, **kwargs):
+        # новые diffusers: (enable=..., gradient_checkpointing_func=...); старые: (module, value=False)
+        if args and isinstance(args[0], nn.Module):
+            module, value = args[0], kwargs.get("value", args[1] if len(args) > 1 else False)
+            if isinstance(module, (Encoder, Decoder)):
+                module.gradient_checkpointing = value
+        else:
+            super()._set_gradient_checkpointing(*args, **kwargs)
 
     def enable_tiling(self, use_tiling: bool = True):
         r"""

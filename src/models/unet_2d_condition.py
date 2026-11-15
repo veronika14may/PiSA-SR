@@ -20,6 +20,11 @@ import torch.utils.checkpoint
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import UNet2DConditionLoadersMixin
+try:
+    from diffusers.loaders import PeftAdapterMixin
+except ImportError:  # в старых diffusers add_adapter уже есть в UNet2DConditionLoadersMixin
+    class PeftAdapterMixin:
+        pass
 from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, deprecate, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.models.activations import get_activation
 from diffusers.models.attention_processor import (
@@ -83,7 +88,7 @@ class UNet2DConditionOutput(BaseOutput):
     sample: torch.FloatTensor = None
 
 
-class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
+class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin, PeftAdapterMixin):
     r"""
     A conditional 2D UNet model that takes a noisy sample, conditional state, and a timestep and returns a sample
     shaped output.
@@ -776,9 +781,14 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         for module in self.children():
             fn_recursive_set_attention_slice(module, reversed_slice_size)
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if hasattr(module, "gradient_checkpointing"):
-            module.gradient_checkpointing = value
+    def _set_gradient_checkpointing(self, *args, **kwargs):
+        # новые diffusers: (enable=..., gradient_checkpointing_func=...); старые: (module, value=False)
+        if args and isinstance(args[0], nn.Module):
+            module, value = args[0], kwargs.get("value", args[1] if len(args) > 1 else False)
+            if hasattr(module, "gradient_checkpointing"):
+                module.gradient_checkpointing = value
+        else:
+            super()._set_gradient_checkpointing(*args, **kwargs)
 
     def enable_freeu(self, s1, s2, b1, b2):
         r"""Enables the FreeU mechanism from https://arxiv.org/abs/2309.11497.
