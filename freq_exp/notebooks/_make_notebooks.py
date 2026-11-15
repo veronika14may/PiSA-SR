@@ -28,10 +28,11 @@ INSTRUCTION = """
 
 1. **Настройки ноутбука (панель справа).** Accelerator — `GPU T4 x2`, Internet — `On`, Persistence — `Files only`.
 2. **Подключите данные (Add Input):**
-   - датасет с кодом — папка `PiSA-SR-main` целиком, вместе с `freq_exp`;
-   - обучающие пары LQ/HQ и валидационные пары LQ/HQ;
-   - Stable Diffusion 2.1-base, релизный чекпоинт `pisa_sr.pkl` и, если используете теги, `ram_swin_large_14m.pth`.
-3. **Ячейка «Пути».** Впишите свои пути. Ячейка «Проверка» сразу скажет, чего не хватает.
+   - обучающие HQ и валидационные HQ (LQ создаются в ноутбуке ячейкой `make_lq`);
+   - датасет с Stable Diffusion 2.1-base (папки `unet`, `vae`, `tokenizer`, `text_encoder`) и релизный чекпоинт `pisa_sr.pkl`;
+   - код берётся из GitHub (`git clone` в первой ячейке), поэтому Internet — `On`.
+3. **Ячейки подготовки.** Первые ячейки клонируют код, собирают папку SD 2.1-base (в датасете нет `scheduler`, конфиг
+   создаётся автоматически) и создают LQ. В ячейке «Пути» впишите свои пути; ячейка «Проверка» сразу скажет, чего не хватает.
 4. **Запускайте ячейки по порядку.** Обучение печатает строку каждые 20 шагов и валидацию каждые `EVAL_EVERY` шагов (по умолчанию 500).
 5. **Время.** Сессия Kaggle ограничена; если этап не успевает, уменьшите `STEPS` или запускайте этапы по отдельности
    (см. раздел «Если сессия оборвалась» в конце).
@@ -48,16 +49,44 @@ INSTRUCTION = """
   члена меньше 5 % от главного (L2 в pix-этапе, LPIPS в sem-этапе), член почти не влияет — увеличьте вес.
 """
 
+BOOT = """# Код из GitHub. Сначала уходим из папки репозитория, иначе rm -rf удалит текущий каталог ядра
+%cd /kaggle/working
+!rm -rf /kaggle/working/PiSA-SR
+!git clone https://github.com/veronika14may/PiSA-SR
+%cd /kaggle/working/PiSA-SR"""
+
+SDBUILD = """!mkdir -p /kaggle/working/sd_v2_1_full
+!SRC=/kaggle/input/datasets/vende14/sd-v2-1/sd_v2_1; \\
+for d in unet vae tokenizer text_encoder; do ln -sf $SRC/$d /kaggle/working/sd_v2_1_full/$d; done; \\
+ls -la /kaggle/working/sd_v2_1_full
+
+# В датасете sd_v2_1 нет папки scheduler — создаём конфиг SD 2.1-base вручную
+import os, json
+sched = "/kaggle/working/sd_v2_1_full/scheduler"
+if os.path.islink(sched):      # остался битый симлинк с прошлого запуска
+    os.remove(sched)
+os.makedirs(sched, exist_ok=True)
+json.dump({
+    "_class_name": "PNDMScheduler", "beta_end": 0.012, "beta_schedule": "scaled_linear",
+    "beta_start": 0.00085, "clip_sample": False, "num_train_timesteps": 1000,
+    "prediction_type": "epsilon", "set_alpha_to_one": False, "skip_prk_steps": True,
+    "steps_offset": 1, "trained_betas": None,
+}, open(sched + "/scheduler_config.json", "w"), indent=2)"""
+
+MAKELQ = """# LQ из HQ без сдвига (повторный запуск пропускает готовые файлы)
+!python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {TRAIN_HQ} --out_dir {TRAIN_LQ}
+!python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {VAL_HQ} --out_dir {VAL_LQ} --seed 1"""
+
 PATHS = '''
 # ==== Пути: отредактируйте под свои датасеты ====
-CODE_SRC  = "/kaggle/input/pisa-sr-main/PiSA-SR-main"      # папка с кодом (внутри должна быть freq_exp)
+CODE_SRC  = "/kaggle/working/PiSA-SR"                       # клон репозитория (внутри должна быть freq_exp)
 SD_PATH   = "/kaggle/working/sd_v2_1_full"                  # Stable Diffusion 2.1-base
-INIT_CKPT = "/kaggle/input/pisa-sr-weights/pisa_sr.pkl"     # релизный чекпоинт PiSA-SR
-RAM_PATH  = ""                                              # ram_swin_large_14m.pth; пусто = без RAM
-TRAIN_LQ  = "/kaggle/input/hq-lq-netherlands-train/lq_images"
-TRAIN_HQ  = "/kaggle/input/hq-lq-netherlands-train/hq_images"
-VAL_LQ    = "/kaggle/input/datasets/vende14/hq-lq-netherlands-val/lq_images"
+INIT_CKPT = "/kaggle/input/datasets/vende14/pisa-sr/pisa_sr.pkl"   # релизный чекпоинт PiSA-SR
+RAM_PATH  = ""      # файл ram_swin_large_14m.pth; пусто = без RAM (фиксированный промпт)
+TRAIN_HQ  = "/kaggle/input/datasets/vende14/data-from-scratch-netherlands/train/hq"
 VAL_HQ    = "/kaggle/input/datasets/vende14/hq-lq-netherlands-val/hq_images"
+TRAIN_LQ  = "/kaggle/working/lq_train"      # создаются ячейкой make_lq из HQ
+VAL_LQ    = "/kaggle/working/lq_val"
 
 # ==== Параметры обучения ====
 OUT_ROOT = "/kaggle/working/experiments/freq"   # сюда пишутся логи и чекпоинты
@@ -70,24 +99,21 @@ AUTO     = 0.3     # калибровка весов частотных член
 '''
 
 SETUP = '''
-import os, shutil, subprocess, sys
+import os, subprocess, sys
 
 # --- Проверка ---
 !nvidia-smi --query-gpu=name,memory.total --format=csv
 missing = [p for p in [CODE_SRC, SD_PATH, INIT_CKPT, TRAIN_LQ, TRAIN_HQ, VAL_LQ, VAL_HQ] if not os.path.exists(p)]
 assert not missing, f"Не найдены пути: {missing}"
-assert os.path.isdir(os.path.join(CODE_SRC, "freq_exp")), "В датасете с кодом нет папки freq_exp"
+assert os.path.isdir(os.path.join(CODE_SRC, "freq_exp")), "В клоне нет папки freq_exp"
 if RAM_PATH and not os.path.exists(RAM_PATH):
     raise FileNotFoundError(RAM_PATH)
-
-# --- Код копируется в рабочую папку (входные датасеты доступны только для чтения) ---
-WORK = "/kaggle/working/PiSA-SR-main"
-if not os.path.exists(WORK):
-    shutil.copytree(CODE_SRC, WORK)
-os.chdir(WORK)
+os.chdir(CODE_SRC)
 
 # --- Пакеты: две функции потерь из статей + метрики ---
 !pip install -q focal-frequency-loss fdl-pytorch lpips pyiqa
+# peft требует torchao>=0.16, а на Kaggle стоит 0.10 — он не нужен
+!pip uninstall -y -q torchao
 # Если окружение чистое, раскомментируйте установку зависимостей PiSA-SR:
 # !pip install -q -r requirements.txt
 
@@ -163,8 +189,8 @@ TWO_STAGE = {"E00"} | {f"E{n:02d}" for n in range(5, 16)}   # экспериме
 
 
 def training_nb(tag, title, what, exps, extra_md=""):
-    cells = [md(f"# {title}\n\n{what}\n{INSTRUCTION}"),
-             code(f'NOTEBOOK_TAG = "{tag}"\n' + PATHS), code(SETUP), code(SHOW), code(EVAL)]
+    cells = [md(f"# {title}\n\n{what}\n{INSTRUCTION}"), code(BOOT), code(SDBUILD),
+             code(f'NOTEBOOK_TAG = "{tag}"\n' + PATHS), code(MAKELQ), code(SETUP), code(SHOW), code(EVAL)]
     for e, desc, flags in exps:
         two = e in TWO_STAGE
         note = ("\n\nОбучение разбито на две ячейки: сначала pix-этап, затем sem-этап. Pix-этап сохраняет "
@@ -198,11 +224,13 @@ NOTEBOOKS["00_diagnostics.ipynb"] = nb([
 
 Запустите его первым. На T4 занимает около получаса (оценка, не замер).
 """ + INSTRUCTION),
+    code(BOOT), code(SDBUILD),
     code('NOTEBOOK_TAG = "00_diagnostics"\n' + PATHS + '''
 # Чекпоинт для вопросов 3 и 4: релизный или ваш дообученный (например, pisasr_final.pkl из прежних запусков)
 CKPT_TO_CHECK = INIT_CKPT
 N_DIAG = 100
 '''),
+    code(MAKELQ),
     code(SETUP),
     md("## 1. Совмещение пар LQ–HQ\n\nСредний сдвиг должен быть меньше 0,25 пикселя HQ."),
     code("!python freq_exp/diag_alignment.py --lq_dir {TRAIN_LQ} --hq_dir {TRAIN_HQ} --n 200\n"
@@ -321,12 +349,14 @@ NOTEBOOKS["09_K6_vae_decoder.ipynb"] = nb([
 
 LQ и UNet на шаге 1 не нужны. Запускайте варианты E16–E18 по одному; время одного запуска на T4 не замерялось.
 """ + INSTRUCTION),
+    code(BOOT), code(SDBUILD),
     code('NOTEBOOK_TAG = "09_K6_vae"\n' + PATHS + '''
 # ==== К6 ====
 VAE_STEPS = 4000      # шагов дообучения декодера
 # Чекпоинт PiSA-SR для шага 2: релизный или ваш дообученный (например, pisasr_final.pkl из 01_baseline)
 CKPT_TO_CHECK = INIT_CKPT
 '''),
+    code(MAKELQ),
     code(SETUP + '\nos.environ["VAE_STEPS"] = str(VAE_STEPS)'),
     code(SHOW_VAE),
     md("## Шаг 1. Дообучение декодера\n\n"
