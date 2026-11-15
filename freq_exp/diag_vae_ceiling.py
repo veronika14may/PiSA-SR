@@ -29,7 +29,11 @@ def main():
     p.add_argument("--sample", action="store_true", help="брать случайный латент (как при обучении), а не среднее")
     a = p.parse_args()
 
-    from src.models.autoencoder_kl import AutoencoderKL
+    try:
+        from src.models.autoencoder_kl import AutoencoderKL
+    except Exception as e:  # копия класса из репозитория несовместима с установленной версией diffusers
+        print(f"VAE из репозитория не загрузился ({type(e).__name__}: {e}); беру AutoencoderKL из diffusers, веса те же.")
+        from diffusers import AutoencoderKL
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     vae = AutoencoderKL.from_pretrained(a.pretrained_model_path, subfolder="vae").to(dev).eval()
     names = list_pairs(a.hq_dir, a.hq_dir, a.n)

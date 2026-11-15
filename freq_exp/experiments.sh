@@ -40,7 +40,8 @@ run() { local name=$1; shift
 
 exp() { case $1 in
   # --- шум базовой линии: исходные потери PiSA-SR, два сида ---
-  E01) run E01_base_seed123        "${SEM_ONLY[@]}" --seed 123 ;;
+  E00) run E00_base_pixsem         "${BOTH[@]}" --seed 123 ;;   # контроль для E05–E15: оба этапа, исходные потери
+  E01) run E01_base_seed123       "${SEM_ONLY[@]}" --seed 123 ;;
   E02) run E02_base_seed456        "${SEM_ONLY[@]}" --seed 456 ;;
   # --- К1: FDL как в статье ---
   E03) run E03_K1_fdl_instead_lpips "${SEM_ONLY[@]}" --sem_fdl 0.01 --sem_lpips 0 --auto_weight_ratio 0 ;;  # FDL — главный член, без калибровки
