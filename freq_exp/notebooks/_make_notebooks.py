@@ -225,23 +225,40 @@ NOTEBOOKS["00_diagnostics.ipynb"] = nb([
 4. Чего модели не хватает больше — амплитуды или фазы?
 
 Запустите его первым. На T4 занимает около получаса (оценка, не замер).
+
+**Про выборки.** Решения принимаются по val. Test используется только в пунктах 1 и 2: это описательные проверки
+данных и VAE, они не зависят от выбора модели, а числа пригодятся в дипломе. Перебор `lambda_sem` и тест подмены
+(пункты 3 и 4) идут только на val. На test модель с зафиксированными настройками прогоняется один раз, в итоговой оценке.
 """ + INSTRUCTION),
     code(BOOT), code(SDBUILD),
     code('NOTEBOOK_TAG = "00_diagnostics"\n' + PATHS + '''
+# ==== Новая нарезка (ноутбук 10_make_splits): впишите имя датасета, куда сохранили dataset/{train,val,test}/hq ====
+DATA_ROOT = "/kaggle/input/datasets/vende14/<имя-датасета>"
+TRAIN_HQ = f"{DATA_ROOT}/train/hq"
+VAL_HQ   = f"{DATA_ROOT}/val/hq"      # по val принимаются решения (вопросы 3 и 4)
+TEST_HQ  = f"{DATA_ROOT}/test/hq"     # test — только описательные проверки 1 и 2; решения по нему не принимать
+TEST_LQ  = f"/kaggle/working/lq_test{_sfx}"
+
 # Чекпоинт для вопросов 3 и 4: релизный или ваш дообученный (например, pisasr_final.pkl из прежних запусков)
 CKPT_TO_CHECK = INIT_CKPT
 N_DIAG = 100
 '''),
     code(MAKELQ),
+    code("# LQ для test: другой сид (2), чем у val (1), чтобы деградация отличалась\n"
+         "!python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {TEST_HQ} --out_dir {TEST_LQ} --seed 2 --preset {LQ_PRESET}"),
     code(SETUP),
+    code("assert \"<\" not in DATA_ROOT, \"впишите имя датасета в DATA_ROOT (ячейка «Пути»)\"\n"
+         "assert os.path.isdir(TEST_HQ) and os.path.isdir(TEST_LQ), f\"нет test: {TEST_HQ}, {TEST_LQ}\""),
     md("## 1. Совмещение пар LQ–HQ\n\nСредний сдвиг должен быть меньше 0,25 пикселя HQ."),
     code("!python freq_exp/diag_alignment.py --lq_dir {TRAIN_LQ} --hq_dir {TRAIN_HQ} --n 200\n"
-         "!python freq_exp/diag_alignment.py --lq_dir {VAL_LQ} --hq_dir {VAL_HQ} --n 200"),
+         "!python freq_exp/diag_alignment.py --lq_dir {VAL_LQ} --hq_dir {VAL_HQ} --n 200\n"
+         "!python freq_exp/diag_alignment.py --lq_dir {TEST_LQ} --hq_dir {TEST_HQ} --n 200"),
     md("## 2. Потолок VAE\n\nЭталон кодируется и декодируется без UNet. Если ошибка в ВЧ-полосах близка к 1, "
-       "узкое место — VAE, и потери на UNet дадут ограниченный эффект."),
-    code("!python freq_exp/diag_vae_ceiling.py --pretrained_model_path {SD_PATH} --hq_dir {VAL_HQ} --n {N_DIAG}"),
+       "узкое место — VAE, и потери на UNet дадут ограниченный эффект. Считается на val и на test."),
+    code("!python freq_exp/diag_vae_ceiling.py --pretrained_model_path {SD_PATH} --hq_dir {VAL_HQ} --n {N_DIAG}\n"
+         "!python freq_exp/diag_vae_ceiling.py --pretrained_model_path {SD_PATH} --hq_dir {TEST_HQ} --n {N_DIAG}"),
     md("## 3. Перебор `lambda_sem`\n\nЕсли с ростом `lambda_sem` отношение `vol_ratio` идёт к 1, а `hf_err` "
-       "растёт выше 1, резкость добавляется выдуманными деталями."),
+       "растёт выше 1, резкость добавляется выдуманными деталями. Только val."),
     code("!python freq_exp/infer_eval.py --pretrained_model_path {SD_PATH} --ckpt {CKPT_TO_CHECK} \\\n"
          "    --lq_dir {VAL_LQ} --hq_dir {VAL_HQ} --out_dir /kaggle/working/sr/diag{_sfx} --n {N_DIAG} \\\n"
          "    --lambda_sem 0 0.5 1.0 1.2 1.5 2.0"),

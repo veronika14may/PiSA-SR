@@ -5,9 +5,11 @@
 
 Печатает таблицу по кольцам частот (FRC, ошибка, энергия), сводку по ВЧ, эффективное разрешение,
 PSNR, VoL/GT и (если установлен пакет lpips) LPIPS. С --sr_dir_b считает разности A − B
-с 95 % доверительным интервалом парным бутстрепом по снимкам.
+с 95 % доверительным интервалом парным бутстрепом. Если имена файлов вида
+`<класс>_<год>_<X>_<Y>_x<..>_y<..>.png` (выход 10_make_splits), ресэмплируются целые тайлы, а не отдельные кропы:
+кропы одного тайла похожи друг на друга, и бутстреп по кропам даёт слишком узкие интервалы.
 """
-import os, sys, csv, argparse
+import os, sys, csv, re, argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
@@ -45,6 +47,31 @@ def aggregate(accs, rows, idx, gsd):
     return s, bands
 
 
+TILE_RE = re.compile(r"(\d{4}_\d+_\d+)_x\d+_y\d+")
+
+
+def tile_groups(names, mode):
+    """Список массивов индексов, по одному на тайл; None — ресэмплировать отдельные снимки."""
+    if mode == "none":
+        return None
+    keys = [(TILE_RE.search(n) or [None, None])[1] for n in names]
+    if any(k is None for k in keys):
+        if mode == "tile":
+            raise SystemExit("--cluster tile: имена файлов не содержат тайла вида 2024_121000_483000_x.._y..")
+        return None
+    g = {}
+    for i, k in enumerate(keys):
+        g.setdefault(k, []).append(i)
+    return [np.array(v) for v in g.values()]
+
+
+def boot_idx(rng, n, groups):
+    if groups is None:
+        return rng.randint(0, n, n)
+    pick = rng.randint(0, len(groups), len(groups))
+    return np.concatenate([groups[j] for j in pick])
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--sr_dir", required=True)
@@ -55,6 +82,8 @@ def main():
     p.add_argument("--out_csv", default=None, help="куда записать метрики по каждому снимку")
     p.add_argument("--n_boot", type=int, default=2000)
     p.add_argument("--no_lpips", action="store_true")
+    p.add_argument("--cluster", choices=["auto", "tile", "none"], default="auto",
+                   help="что ресэмплировать в бутстрепе: тайлы (по имени файла) или отдельные снимки")
     a = p.parse_args()
 
     lp = None
@@ -74,6 +103,19 @@ def main():
     s, bands = aggregate(accs, rows, all_idx, a.gsd_cm)
     print(f"\n== {a.sr_dir}\n" + FM.format_bands(bands))
     print("сводка:", {k: round(v, 4) for k, v in s.items()})
+    groups = tile_groups(names, a.cluster)
+    print(f"бутстреп: {'тайлов ' + str(len(groups)) if groups else 'снимков ' + str(len(names))}")
+    if not a.sr_dir_b and a.n_boot > 0:
+        rng = np.random.RandomState(0)
+        bs = {k: [] for k in s}
+        for _ in range(a.n_boot):
+            sa_, _ = aggregate(accs, rows, boot_idx(rng, len(names), groups), a.gsd_cm)
+            for k in s:
+                bs[k].append(sa_[k])
+        print("95 % интервал (бутстреп):")
+        for k in s:
+            lo, hi = np.percentile(bs[k], [2.5, 97.5])
+            print(f"  {k:12s} {s[k]:9.4f}  [{lo:.4f}; {hi:.4f}]")
     if a.out_csv:
         with open(a.out_csv, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
@@ -88,12 +130,12 @@ def main():
         keys = [k for k in s if k in sb]
         diffs = {k: [] for k in keys}
         for _ in range(a.n_boot):
-            idx = rng.randint(0, len(names), len(names))
+            idx = boot_idx(rng, len(names), groups)
             sa_, _ = aggregate(accs, rows, idx, a.gsd_cm)
             sb_, _ = aggregate(accs_b, rows_b, idx, a.gsd_cm)
             for k in keys:
                 diffs[k].append(sa_[k] - sb_[k])
-        print("\nразность A − B, 95 % интервал (парный бутстреп по снимкам):")
+        print("\nразность A − B, 95 % интервал (парный бутстреп, см. строку «бутстреп» выше):")
         for k in keys:
             lo, hi = np.percentile(diffs[k], [2.5, 97.5])
             mark = "значимо" if (lo > 0 or hi < 0) else "в пределах шума"
