@@ -19,7 +19,7 @@ import torch
 from PIL import Image
 
 import metrics as FM
-from io_utils import IMG_EXT, load01, psnr
+from io_utils import IMG_EXT, load01, psnr, pick_even
 
 
 def main():
@@ -61,8 +61,7 @@ def main():
 
     names = sorted(f for f in os.listdir(a.lq_dir) if f.lower().endswith(IMG_EXT)
                    and os.path.exists(os.path.join(a.hq_dir, f)))
-    if a.n > 0:
-        names = names[:a.n]
+    names = pick_even(names, a.n)
     paths = [os.path.join(a.lq_dir, n) for n in names]
     print(f"снимков: {len(names)}")
 

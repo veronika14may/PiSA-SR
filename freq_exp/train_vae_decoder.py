@@ -29,7 +29,7 @@ from torchvision import transforms
 
 import losses as FL
 import metrics as FM
-from io_utils import IMG_EXT, load01, psnr
+from io_utils import IMG_EXT, load01, psnr, pick_even
 from vae_utils import load_vae, load_decoder, save_decoder, decoder_params
 
 TERMS = ("l1", "lpips", "ffl", "fsl", "fdl")
@@ -111,7 +111,7 @@ class HQCrops(Dataset):
 def load_val(hq_dir, n, crop):
     """Те же снимки и кропы, что в diag_vae_ceiling.py."""
     names = sorted(f for f in os.listdir(hq_dir) if f.lower().endswith(IMG_EXT))
-    names = names[:n] if n > 0 else names
+    names = pick_even(names, n)
     out = []
     for nm in names:
         hq = load01(os.path.join(hq_dir, nm))
