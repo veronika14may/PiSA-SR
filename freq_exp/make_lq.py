@@ -20,6 +20,9 @@
   mild                   — мягкий вариант под снимок другого сенсора с меньшим разрешением: PSF-размытие,
                            точное понижение в 4 раза (интегрирование по площади), небольшой шум сенсора на уровне LQ,
                            редкий мягкий JPEG. Без случайного масштаба и sinc-ореолов.
+  b2                     — mild с диапазонами из работ по ДЗЗ (MAE-ADHRN, MGSTNet): σ 0,2–2,6, ядро до 21,
+                           размытие движения 7×7 (p=0,15), шум 1–8, пуассон 0,05–1,0, JPEG 50–95 (p=0,5).
+                           Одна ступень, как в mild; все ядра симметричны, сдвига нет.
 
 Деградация каждого файла определяется его именем и --seed, поэтому повторный запуск даёт те же LQ.
 Скрипт не зависит от basicsr; нужны torch, numpy, scipy, Pillow.
@@ -66,7 +69,15 @@ OPT_MILD = dict(
     gaussian_noise_prob=0.5, noise_range=[0.5, 3], poisson_scale_range=[0.05, 0.3], gray_noise_prob=0.1,
     jpeg_prob=0.7, jpeg_range=[70, 95],
 )
-PRESETS = {"diffbir": OPT, "mild": OPT_MILD}
+# Вариант B2: mild с диапазонами, согласованными с работами по ДЗЗ (MAE-ADHRN, MGSTNet).
+OPT_B2 = dict(OPT_MILD,
+    kernel_sizes=[9, 11, 13, 15, 17, 19, 21],
+    blur_sigma=[0.2, 2.6],
+    motion_prob=0.15, motion_size=7,             # размытие движения носителя
+    noise_range=[1, 8], poisson_scale_range=[0.05, 1.0],
+    jpeg_prob=0.5, jpeg_range=[50, 95],
+)
+PRESETS = {"diffbir": OPT, "mild": OPT_MILD, "b2": OPT_B2}
 
 
 # ----------------------------- ядра размытия -----------------------------
@@ -109,6 +120,16 @@ def sinc_kernel(k, omega_c):
     with np.errstate(divide="ignore", invalid="ignore"):
         ker = omega_c * special.j1(omega_c * r) / (2 * np.pi * r)
     ker[(k - 1) // 2, (k - 1) // 2] = omega_c ** 2 / (4 * np.pi)
+    return ker / ker.sum()
+
+
+def motion_kernel(rng, k):
+    """Размытие движения: отрезок через центр ядра. Симметричен относительно центра, поэтому сдвига не даёт."""
+    theta, length = rng.uniform(0, np.pi), rng.uniform(3, k)
+    xx, yy = _grid(k)
+    d = np.abs(-np.sin(theta) * xx + np.cos(theta) * yy)   # расстояние до линии
+    t = np.abs(np.cos(theta) * xx + np.sin(theta) * yy)    # положение вдоль линии
+    ker = np.clip(1 - d, 0, 1) * (t <= length / 2)
     return ker / ker.sum()
 
 
@@ -226,6 +247,9 @@ def degrade_mild(hq, rng, scale=4, o=OPT_MILD):
     """Мягкий пресет: размытие PSF -> точное понижение в scale раз -> шум сенсора -> (иногда) мягкий JPEG."""
     H, W = hq.shape[-2:]
     out = filter2d(hq, random_kernel(rng, 0.0, o["blur_sigma"], o))
+    # проверка > 0 стоит первой, чтобы для mild не тратить случайное число и не менять уже созданные LQ
+    if o.get("motion_prob", 0) > 0 and rng.uniform() < o["motion_prob"]:
+        out = filter2d(out, motion_kernel(rng, o["motion_size"]))
     mode = str(rng.choice(o["resize_modes"], p=o["resize_prob"]))
     out = resize(out, (H // scale, W // scale), mode, antialias=True)
     out = add_noise(rng, out, o["gaussian_noise_prob"], o["noise_range"], o["poisson_scale_range"], o["gray_noise_prob"])
@@ -239,7 +263,8 @@ def main():
     p.add_argument("--hq_dir", required=True)
     p.add_argument("--out_dir", required=True)
     p.add_argument("--preset", choices=sorted(PRESETS), default="diffbir",
-                   help="diffbir — конфиг Real-ESRGAN/DiffBIR; mild — мягкая деградация (см. описание в начале файла)")
+                   help="diffbir — конфиг Real-ESRGAN/DiffBIR; mild — мягкая деградация; "
+                        "b2 — mild с диапазонами из работ по ДЗЗ (см. описание в начале файла)")
     p.add_argument("--scale", type=int, default=4)
     p.add_argument("--seed", type=int, default=0, help="для валидации возьмите другой сид, чем для обучения")
     p.add_argument("--n", type=int, default=0, help="обработать только первые n файлов (0 = все)")
@@ -273,7 +298,8 @@ def main():
             f"{nm}: размер {w}x{h} не делится на {a.scale}; обрежьте HQ, иначе пары не совместятся"
         hq = torch.from_numpy(np.array(im)).permute(2, 0, 1).float().div(255.0).unsqueeze(0).to(a.device)
         rng = np.random.default_rng([a.seed, zlib.crc32(nm.encode())])   # зависит только от имени файла и сида
-        lq = (degrade_mild if a.preset == "mild" else degrade)(hq, rng, a.scale)
+        o = PRESETS[a.preset]
+        lq = degrade_mild(hq, rng, a.scale, o) if a.preset in ("mild", "b2") else degrade(hq, rng, a.scale, o)
         arr = (lq[0].permute(1, 2, 0).cpu().numpy() * 255.0).round().astype(np.uint8)
         Image.fromarray(arr).save(dst)
         done += 1
