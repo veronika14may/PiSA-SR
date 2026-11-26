@@ -57,11 +57,16 @@ BOOT = """# Код из GitHub. Сначала уходим из папки ре
 
 SDBUILD = """!mkdir -p /kaggle/working/sd_v2_1_full
 !SRC=/kaggle/input/datasets/vende14/sd-v2-1/sd_v2_1; \\
-for d in unet vae tokenizer text_encoder; do ln -sf $SRC/$d /kaggle/working/sd_v2_1_full/$d; done; \\
+for d in unet vae text_encoder; do ln -sfn $SRC/$d /kaggle/working/sd_v2_1_full/$d; done; \\
 ls -la /kaggle/working/sd_v2_1_full
 
 # В датасете sd_v2_1 нет папки scheduler — создаём конфиг SD 2.1-base вручную
-import os, json
+import os, json, subprocess, sys
+subprocess.run([
+    sys.executable, "-m", "freq_exp.prepare_sd_tokenizer",
+    "--sd-dir", "/kaggle/working/sd_v2_1_full",
+    "--source", "/kaggle/input/datasets/vende14/sd-v2-1/sd_v2_1/tokenizer",
+], check=True)
 sched = "/kaggle/working/sd_v2_1_full/scheduler"
 if os.path.islink(sched):      # остался битый симлинк с прошлого запуска
     os.remove(sched)
