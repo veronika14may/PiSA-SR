@@ -55,28 +55,13 @@ BOOT = """# Код из GitHub. Сначала уходим из папки ре
 !git clone https://github.com/veronika14may/PiSA-SR
 %cd /kaggle/working/PiSA-SR"""
 
-SDBUILD = """!mkdir -p /kaggle/working/sd_v2_1_full
-!SRC=/kaggle/input/datasets/vende14/sd-v2-1/sd_v2_1; \\
-for d in unet vae text_encoder; do ln -sfn $SRC/$d /kaggle/working/sd_v2_1_full/$d; done; \\
-ls -la /kaggle/working/sd_v2_1_full
-
-# В датасете sd_v2_1 нет папки scheduler — создаём конфиг SD 2.1-base вручную
-import os, json, subprocess, sys
+SDBUILD = """# Проверяем наличие весов и собираем рабочий каталог SD 2.1-base.
+import subprocess, sys
 subprocess.run([
-    sys.executable, "-m", "freq_exp.prepare_sd_tokenizer",
+    sys.executable, "-m", "freq_exp.prepare_sd_base",
+    "--source", "/kaggle/input/datasets/vende14/sd-v2-1/sd_v2_1",
     "--sd-dir", "/kaggle/working/sd_v2_1_full",
-    "--source", "/kaggle/input/datasets/vende14/sd-v2-1/sd_v2_1/tokenizer",
-], check=True)
-sched = "/kaggle/working/sd_v2_1_full/scheduler"
-if os.path.islink(sched):      # остался битый симлинк с прошлого запуска
-    os.remove(sched)
-os.makedirs(sched, exist_ok=True)
-json.dump({
-    "_class_name": "PNDMScheduler", "beta_end": 0.012, "beta_schedule": "scaled_linear",
-    "beta_start": 0.00085, "clip_sample": False, "num_train_timesteps": 1000,
-    "prediction_type": "epsilon", "set_alpha_to_one": False, "skip_prk_steps": True,
-    "steps_offset": 1, "trained_betas": None,
-}, open(sched + "/scheduler_config.json", "w"), indent=2)"""
+], check=True)"""
 
 MAKELQ = """# LQ из HQ без сдвига (повторный запуск пропускает готовые файлы)
 !python /kaggle/working/PiSA-SR/freq_exp/make_lq.py --hq_dir {TRAIN_HQ} --out_dir {TRAIN_LQ} --preset {LQ_PRESET}
