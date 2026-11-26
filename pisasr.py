@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
-from transformers import AutoTokenizer, CLIPTextModel
+from transformers import CLIPTextModel, CLIPTokenizerFast
 from diffusers import DDPMScheduler
 from diffusers.utils.peft_utils import set_weights_and_activate_adapters
 from diffusers.utils.import_utils import is_xformers_available
@@ -35,6 +35,18 @@ def read_yaml(file_path):
     with open(file_path, 'r') as file:
         data = yaml.safe_load(file)
     return data
+
+
+def load_clip_tokenizer(pretrained_model_path):
+    # The SD text encoder is CLIP. Avoid AutoTokenizer's generic backend for legacy exports.
+    tokenizer = CLIPTokenizerFast.from_pretrained(pretrained_model_path, subfolder="tokenizer")
+    if tokenizer.vocab_size <= len(tokenizer.all_special_ids):
+        raise ValueError(
+            f"Empty CLIP vocabulary in {pretrained_model_path}/tokenizer. "
+            "Check that the tokenizer directory has the SD model's vocab.json and merges.txt "
+            "or its tokenizer.json."
+        )
+    return tokenizer
 
 
 def initialize_unet(rank_pix, rank_sem, return_lora_module_names=False, pretrained_model_path=None):
@@ -87,7 +99,7 @@ class CSDLoss(torch.nn.Module):
     def __init__(self, args, accelerator):
         super().__init__() 
 
-        self.tokenizer = AutoTokenizer.from_pretrained(args.pretrained_model_path_csd, subfolder="tokenizer")
+        self.tokenizer = load_clip_tokenizer(args.pretrained_model_path_csd)
         # scheduler is loaded from the same SD base as the CSD teacher UNet
         self.sched = DDPMScheduler.from_pretrained(args.pretrained_model_path_csd, subfolder="scheduler")
         self.args = args
@@ -179,7 +191,7 @@ class PiSASR(torch.nn.Module):
     def __init__(self, args):
         super().__init__()
 
-        self.tokenizer = AutoTokenizer.from_pretrained(args.pretrained_model_path, subfolder="tokenizer")
+        self.tokenizer = load_clip_tokenizer(args.pretrained_model_path)
         self.text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_path, subfolder="text_encoder").cuda()
         self.args = args
 
@@ -332,7 +344,7 @@ class PiSASR_eval(nn.Module):
         self.args = args
 
         # Initialize components
-        self.tokenizer = AutoTokenizer.from_pretrained(args.pretrained_model_path, subfolder="tokenizer")
+        self.tokenizer = load_clip_tokenizer(args.pretrained_model_path)
         self.text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_path, subfolder="text_encoder").to(self.device)
         self.sched = DDPMScheduler.from_pretrained(args.pretrained_model_path, subfolder="scheduler")
         self.vae = AutoencoderKL.from_pretrained(args.pretrained_model_path, subfolder="vae")
